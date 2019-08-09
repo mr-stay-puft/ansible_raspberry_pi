@@ -1,0 +1,198 @@
+---
+#vars_prompt:
+#  - name: new_user_password
+#    prompt: "Define a new user password for new user:"
+#    private: yes
+#    confirm: yes
+#    #Uses the crypt lib
+#    encrypt: "sha512_crypt"
+#    #Allow Special Characters:
+#    unsafe: yes
+  #- name: Debug
+  #  debug:
+  #    msg: "{{new_user_password}}"
+
+- hosts: new_raspberry_pis
+  gather_facts: yes
+  tasks:
+
+    #Addresses new releases of raspbian that may encounter "E: Repository 'http://raspbian.raspberrypi.org/raspbian buster InRelease' changed its 'Suite' value from 'testing' to 'stable'"
+    - name: Apt Update
+      become: yes
+      shell: apt -y update
+
+    #- name: Update all packages to their latest versions
+    #  apt:
+    #    upgrade: dist
+    #  tags:
+    #    - init
+    
+    #- name: Install python-apt
+    #  become: yes
+    #  apt:
+    #    name: "python-apt"
+    #    state: latest
+    
+    - name: Install Packages from APT
+      become: yes
+      apt:
+        name: "{{ packages }}"
+        state: latest
+        update_cache: yes
+        cache_valid_time: 3600 #Only run "update_cache=yes" if the last one is more than N seconds ago
+      vars:
+        packages:
+        - python3-pip
+        - htop
+        - tmux
+        - tree
+        - aptitude
+      tags:
+        - init
+
+    - name: Update all packages to their latest versions
+      become: yes
+      apt:
+        upgrade: dist
+      tags:
+        - init
+
+    - name: Update On Device Hostname
+      become: yes
+      hostname:
+          name: "{{new_fqdn}}" 
+      tags:
+        - init
+
+    #- name: Install Packages via PIP3
+    #  pip:
+    #    name: "{{ item }}"
+    #    executable: pip3
+    #  with_items:
+    #    - virtualenv
+
+    - name: Create A Password for New User Account "{{new_username}}"
+      pause:
+        prompt: "Enter the new user password for {{new_username}}:"
+        echo: no
+      register: dpass
+
+    - name: Test Fact
+      set_fact:
+          new_user_pass: "{{dpass.user_input}}"
+          #new_user_pass_vault: "{{vault_out.stdout}}"
+          #new_user_pass: "{{ dpass.user_input | password_hash('sha512', 65534 | random(seed=inventory_hostname) | string )}}"
+          cacheable: no # not required. This boolean indicates if the facts set will also be added to the fact cache, if fact caching is enabled.
+    
+    #- name: Evidence of Salted Pass
+    #  #DEPENDS: Python passlib is required for password_hash functionality.
+    #  debug:
+    #    msg: "{{ new_user_pass }}"
+    #    verbosity: 2
+    
+    - name: Create New User Account "{{new_username}}" on {{inventory_hostname}}.
+      become: yes
+      user:
+          name: "{{new_username}}"
+          update_password: always
+          create_home: yes
+          groups:
+            - users
+            - sudo
+          password: "{{ new_user_pass }}"
+          state: present
+  
+#Modify Inventory file group raspberry_pis to include each new host initalized from the group new_raspberry_pis, using the provided variables.
+- hosts: localhost
+  gather_facts: yes
+  tasks:
+    #- name: A Pause and Message would be great here.
+    - name: Set pass
+      set_fact:
+        vault_input: "{{hostvars[item].new_user_pass}}"
+      with_items: "{{groups.new_raspberry_pis[0]}}"
+
+    - name: "Vaulting Credentials: Please enter a vault password."
+      command: ansible-vault encrypt_string "{{vault_input}}"
+      register: vault_out
+      
+    - name: Debug Vault_Out
+      debug:
+        msg: "{{vault_out.stdout}}"
+        verbosity: 2
+
+    - name: Test Fact
+      set_fact:
+          new_user_pass_vault: "{{vault_out.stdout}}"
+          #new_user_pass: "{{ dpass.user_input | password_hash('sha512', 65534 | random(seed=inventory_hostname) | string )}}"
+          cacheable: no # not required. This boolean indicates if the facts set will also be added to the fact cache, if fact caching is enabled.
+
+    #- name: Debug
+    #  debug:
+    #    msg: "{{hostvars[item].new_user_pass}}"
+    #    verbosity: 2
+    #  with_items: "{{groups.new_raspberry_pis}}"
+
+    #- name: Debug
+    #  debug:
+    #    msg: "{{hostvars[item]}}"
+    #  with_items: "{{groups.new_raspberry_pis}}"
+
+    #- name: Testing BlockInFile
+    #  blockinfile:
+    #    #NOTE: inventory_file is uncallable if localhost is undefined in your inventory, but called in a play resulting in a 'implicit localhost' condition. See https://docs.ansible.com/ansible/latest/inventory/implicit_localhost.html for more detail.
+    #    #as a result, the following solition is only functional for a single inventory source. In the case of multiple inventory files, only the first in the list will be assessed. 
+    #    path: "{{ inventory_file if inventory_file else ansible_inventory_sources[0] }}"
+    #    create: no
+    #    backup: yes
+    #    state: present 
+    #    #TO DO: Use a Template for the Block Instead
+    #    insertafter: "\\.*raspberry_pis:\\n  hosts:\\.*"
+    #    block: |2 
+    #          {{hostvars[item].new_fqdn}}:
+    #            ansible_connection: {{hostvars[item].ansible_connection}}
+    #            ansible_host: {{hostvars[item].ansible_host}}
+    #            ansible_user: {{hostvars[item].new_username}}
+    #            ansible_ssh_pass: {{hostvars[item].new_user_pass}}
+    #  with_items: "{{groups.new_raspberry_pis}}"
+    #  tags:
+    #    - init
+
+    - name: "Replace instead?"
+      replace:
+          path: "{{ inventory_file if inventory_file else ansible_inventory_sources[0] }}" # required. The file to modify.,Before 2.3 this option was only usable as I(dest), I(destfile) and I(name).
+          regexp: "\\.*\\nraspberry_pis:\\n  hosts:\\.*" # required. The regular expression to look for in the contents of the file. Uses Python regular expressions; see U(http://docs.python.org/2/library/re.html). Uses MULTILINE mode, which means C(^) and C($) match the beginning and end of the file, as well as the beginning and end respectively of I(each line) of the file.,Does not use DOTALL, which means the C(.) special character matches any character I(except newlines). A common mistake is to assume that a negated character set like C([^#]) will also not match newlines. In order to exclude newlines, they must be added to the set like C([^#\n]).,Note that, as of ansible 2, short form tasks should have any escape sequences backslash-escaped in order to prevent them being parsed as string literal escapes. See the examples.
+          #after: undefined # not required. If specified, the line after the replace/remove will start. Can be used in combination with C(before). Uses Python regular expressions; see U(http://docs.python.org/2/library/re.html).
+          replace: "raspberry_pis:\\n  hosts:\\n    {{hostvars[item].new_fqdn}}:\\n      ansible_connection: {{hostvars[item].ansible_connection}}\\n      ansible_host: {{hostvars[item].ansible_host}}\\n      ansible_user: {{hostvars[item].new_username}}\\n      ansible_ssh_pass: {{new_user_pass_vault}}" # not required. The string to replace regexp matches. May contain backreferences that will get expanded with the regexp capture groups if the regexp matches. If not set, matches are removed entirely.
+          #validate: undefined # not required. The validation command to run before copying into place. The path to the file to validate is passed in via '%s' which must be present as in the example below. The command is passed securely so shell features like expansion and pipes won't work.
+          #attributes: undefined # not required. Attributes the file or directory should have. To get supported flags look at the man page for I(chattr) on the target system. This string should contain the attributes in the same order as the one displayed by I(lsattr).,C(=) operator is assumed as default, otherwise C(+) or C(-) operators need to be included in the string.
+          backup: yes # not required. Create a backup file including the timestamp information so you can get the original file back if you somehow clobbered it incorrectly.
+          #before: undefined # not required. If specified, the line before the replace/remove will occur. Can be used in combination with C(after). Uses Python regular expressions; see U(http://docs.python.org/2/library/re.html).
+          #seuser: undefined # not required. User part of SELinux file context. Will default to system policy, if applicable. If set to C(_default), it will use the C(user) portion of the policy if available.
+          #group: undefined # not required. Name of the group that should own the file/directory, as would be fed to I(chown).
+          #encoding: utf-8 # not required. The character encoding for reading and writing the file.
+          #unsafe_writes: no # not required. By default this module uses atomic operations to prevent data corruption or inconsistent reads from the target files, but sometimes systems are configured or just broken in ways that prevent this. One example is docker mounted files, which cannot be updated atomically from inside the container and can only be written in an unsafe manner.,This option allows Ansible to fall back to unsafe methods of updating files when atomic operations fail (however, it doesn't force Ansible to perform unsafe writes). IMPORTANT! Unsafe writes are subject to race conditions and can lead to data corruption.
+          #selevel: s0 # not required. Level part of the SELinux file context. This is the MLS/MCS attribute, sometimes known as the C(range). C(_default) feature works as for I(seuser).
+          #setype: undefined # not required. Type part of SELinux file context, C(_default) feature works as for I(seuser).
+          #serole: undefined # not required. Role part of SELinux file context, C(_default) feature works as for I(seuser).
+          #mode: undefined # not required. Mode the file or directory should be. For those used to I(/usr/bin/chmod) remember that modes are actually octal numbers. You must either add a leading zero so that Ansible's YAML parser knows it is an octal number (like C(0644) or C(01777)) or quote it (like C('644') or C('1777')) so Ansible receives a string and can do its own conversion from string into number.  Giving Ansible a number without following one of these rules will end up with a decimal number which will have unexpected results. As of version 1.8, the mode may be specified as a symbolic mode (for example, C(u+rwx) or C(u=rw,g=r,o=r)).
+          #owner: undefined # not required. Name of the user that should own the file/directory, as would be fed to I(chown).
+          #others: undefined # not required. All arguments accepted by the M(file) module also work here.
+      with_items: "{{groups.new_raspberry_pis}}"
+
+
+#- hosts: raspberry_pis
+#  gather_facts: yes
+#  tasks:
+#    - name: Update all packages to their latest versions
+#      apt:
+#        upgrade: dist
+#      tags:
+#        - update
+
+              #{{hostvars[item].new_fqdn}}:
+                #ansible_connection: {{hostvars[item].ansible_connection}}
+                #ansible_host: {{hostvars[item].ansible_host}}
+                #ansible_user: {{hostvars[item].new_username}}
+                #ansible_ssh_pass: {{ dpass.user_input | password_hash('sha512', 65534 | random(seed=inventory_hostname) | string )}}
+              #vars:

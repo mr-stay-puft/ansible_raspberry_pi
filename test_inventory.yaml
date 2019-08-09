@@ -1,0 +1,27 @@
+---
+all:
+  vars:
+    domain: my.domain
+  hosts:
+    localhost:
+      ansible_host: 127.0.0.1
+      ansible_connection: local
+new_raspberry_pis:
+  hosts:
+    pi3:
+      ansible_host: 10.0.100.103
+  vars:
+    ansible_connection: ssh
+    ansible_user: pi
+    ansible_ssh_pass: "raspberry"
+    new_fqdn: "{{inventory_hostname}}.{{domain}}"
+    new_username: pi_user
+    #new_username_password is prompted for and established during playbook run.
+raspberry_pis:
+  hosts:
+    pi0.domain:
+      ansible_host: 10.0.100.100
+      ansible_ssh_pass: "super Secure p@$$"
+  vars:
+    ansible_connection: ssh
+    ansible_user: pi
